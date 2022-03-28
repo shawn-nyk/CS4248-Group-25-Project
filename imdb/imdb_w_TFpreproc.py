@@ -1,5 +1,6 @@
 import tensorflow as tf
 import pickle
+from tensorflow import keras
 
 training_dir = "aclImdb_v1/aclImdb/train"
 testing_dir = "aclImdb_v1/aclImdb/test"
@@ -91,8 +92,52 @@ def pre_process_data(raw_training_data, raw_validation_data, raw_testing_data, v
 
     return train_ds, val_ds, test_ds, vectorizer
 
+#get glove files from https://www.kaggle.com/datasets/anindya2906/glove6b
+glove_dir = '../input/glove6b'
 
-def create_model(train_ds, val_ds, test_ds):
+def get_glove_embedding(vectorizer):
+    
+    voc = vectorizer.get_vocabulary()
+    word_index = dict(zip(voc, range(len(voc))))
+    
+    embeddings_index = {}
+    for f_path in os.listdir(glove_dir):
+        with open(glove_dir + "/" + f_path) as f:
+            for line in f:
+                word, coefs = line.split(maxsplit=1)
+                coefs = np.fromstring(coefs, "f", sep=" ")
+                embeddings_index[word] = coefs
+
+    print("Found %s word vectors." % len(embeddings_index))
+    
+    num_tokens = len(voc) + 2
+    embedding_dim = 100
+    hits = 0
+    misses = 0
+
+   # Prepare embedding matrix
+    embedding_matrix = np.zeros((num_tokens, embedding_dim))
+    for word, i in word_index.items():
+        embedding_vector = embeddings_index.get(word)
+        if embedding_vector is not None:
+        # Words not found in embedding index will be all-zeros.
+        # This includes the representation for "padding" and "OOV"
+            embedding_matrix[i] = embedding_vector
+            hits += 1
+        else:
+            misses += 1
+    print("Converted %d words (%d misses)" % (hits, misses))
+    
+    embedding_layer = Embedding(
+        num_tokens,
+        embedding_dim,
+        embeddings_initializer=keras.initializers.Constant(embedding_matrix),
+        trainable=False,
+    )
+    
+    return embedding_layer
+    
+def create_model(train_ds, val_ds, test_ds, use_glove):
 
     embedding_dim = 16
 
@@ -105,7 +150,10 @@ def create_model(train_ds, val_ds, test_ds):
 
     model = tf.keras.Sequential()
 
-    model.add(tf.keras.layers.Embedding(max_features + 1, embedding_dim))
+    embedding = tf.keras.layers.Embedding(max_features + 1, embedding_dim)
+    if use_glove:
+        embedding = use_glove
+    model.add(embedding)
     model.add(tf.keras.layers.Dropout(0.2))
 
     model.add(tf.keras.layers.LSTM(units=64))
@@ -197,7 +245,10 @@ def main():
         
         train_ds, val_ds, test_ds, vectorizer = pre_process_data(raw_training_data, raw_validation_data,
                                                                  raw_testing_data, chosen_vectorizer)
-        model = create_model(train_ds, val_ds, test_ds)
+        use_glove = get_glove_embedding(vectorizer)
+        #use_glove = None
+        
+        model = create_model(train_ds, val_ds, test_ds, use_glove)
 
         save_model(model, vectorizer)
 
